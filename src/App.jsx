@@ -97,7 +97,7 @@ function Direction({ dir, light }) {
   );
 }
 
-function Flashcard({ ratio, flipped, onFlip, isKnown }) {
+function Flashcard({ ratio, flipped, onFlip, status }) {
   const c = CATEGORIES.find((x) => x.id === ratio.category);
   return (
     <button
@@ -139,9 +139,14 @@ function Flashcard({ ratio, flipped, onFlip, isKnown }) {
             </p>
           </div>
 
-          {isKnown && (
+          {status === "known" && (
             <span className="stamp stamp-in absolute bottom-24 right-8 text-ledger border-ledger rotate-[-8deg] text-sm">
               ✓ Posted to memory
+            </span>
+          )}
+          {status === "unknown" && (
+            <span className="stamp stamp-in absolute bottom-24 right-8 text-seal border-seal rotate-[-8deg] text-sm">
+              ✗ Still learning
             </span>
           )}
         </div>
@@ -174,23 +179,35 @@ function Flashcard({ ratio, flipped, onFlip, isKnown }) {
   );
 }
 
-function StudyMode({ known, toggleKnown }) {
+function StudyMode({ marks, markKnown, markUnknown, clearMark }) {
   const [cat, setCat] = useState("all");
+  const [progress, setProgress] = useState("all");
   const [order, setOrder] = useState(() => RATIOS.map((r) => r.id));
   const [idx, setIdx] = useState(0);
   const [flipped, setFlipped] = useState(false);
 
   const filtered = useMemo(
-    () => order.map((id) => RATIOS.find((r) => r.id === id)).filter((r) => cat === "all" || r.category === cat),
-    [order, cat]
+    () =>
+      order
+        .map((id) => RATIOS.find((r) => r.id === id))
+        .filter((r) => cat === "all" || r.category === cat)
+        .filter((r) => {
+          const s = marks[r.id];
+          if (progress === "known") return s === "known";
+          if (progress === "unknown") return s === "unknown";
+          if (progress === "new") return !s;
+          return true;
+        }),
+    [order, cat, progress, marks]
   );
   const safeIdx = Math.min(idx, Math.max(0, filtered.length - 1));
   const current = filtered[safeIdx];
+  const currentStatus = current ? marks[current.id] : undefined;
 
   useEffect(() => {
     setIdx(0);
     setFlipped(false);
-  }, [cat]);
+  }, [cat, progress]);
 
   useEffect(() => {
     const h = (e) => {
@@ -206,41 +223,45 @@ function StudyMode({ known, toggleKnown }) {
         setFlipped(false);
         setTimeout(() => setIdx((i) => Math.max(i - 1, 0)), 60);
       }
+      if ((e.key === "1" || e.key.toLowerCase() === "k") && current) {
+        markKnown(current.id);
+      }
+      if ((e.key === "2" || e.key.toLowerCase() === "x") && current) {
+        markUnknown(current.id);
+      }
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
-  }, [filtered.length]);
+  }, [filtered.length, current, markKnown, markUnknown]);
 
-  if (!current) return <p className="font-display italic text-ink-soft">No entries under this tab.</p>;
+  if (!current)
+    return (
+      <div>
+        <ProgressFilter progress={progress} setProgress={setProgress} marks={marks} cat={cat} setCat={setCat} order={order} setOrder={setOrder} setIdx={setIdx} setFlipped={setFlipped} />
+        <p className="font-display italic text-ink-soft mt-6">No entries under this tab. Clear the progress filter to see the rest.</p>
+      </div>
+    );
 
   const go = (d) => {
     setFlipped(false);
     setTimeout(() => setIdx((i) => Math.min(Math.max(i + d, 0), filtered.length - 1)), 60);
   };
 
+  const grade = (fn) => {
+    fn(current.id);
+    setFlipped(false);
+    setTimeout(() => setIdx((i) => Math.min(i + 1, filtered.length - 1)), 120);
+  };
+
+  const statusMark = (s, i, isActive) => {
+    if (s === "known") return <span className="ml-auto shrink-0 text-xs font-bold text-ledger">✓</span>;
+    if (s === "unknown") return <span className="ml-auto shrink-0 text-xs font-bold text-seal">✗</span>;
+    return <span className={`ml-auto shrink-0 text-xs ${isActive ? "text-paper/50" : "text-ink-faint"}`}>○</span>;
+  };
+
   return (
     <div>
-      <div className="flex flex-wrap gap-2 mb-6">
-        <FilterTab active={cat === "all"} onClick={() => setCat("all")} label={`All · ${order.length}`} />
-        {CATEGORIES.map((c) => (
-          <FilterTab
-            key={c.id}
-            active={cat === c.id}
-            onClick={() => setCat(c.id)}
-            label={c.id === "investment" ? "IN · INVESTMENT" : `${CAT_CODE[c.id]} · ${c.label}`}
-          />
-        ))}
-        <button
-          onClick={() => {
-            setOrder(shuffle(order));
-            setIdx(0);
-            setFlipped(false);
-          }}
-          className="px-4 py-1.5 rounded-sm text-sm font-bold bg-seal text-paper-card ledger-shadow-sm ledger-press border-2 border-ink font-ledger uppercase tracking-wider text-xs"
-        >
-          ↻ Shuffle
-        </button>
-      </div>
+      <ProgressFilter progress={progress} setProgress={setProgress} marks={marks} cat={cat} setCat={setCat} order={order} setOrder={setOrder} setIdx={setIdx} setFlipped={setFlipped} />
 
       <div className="lg:grid lg:grid-cols-[300px_minmax(0,1fr)] lg:gap-8 lg:items-start">
         <aside className="hidden lg:block rounded-sm border-2 border-ink bg-paper-card ledger-shadow-sm sticky top-24 max-h-[70vh] overflow-y-auto">
@@ -268,9 +289,7 @@ function StudyMode({ known, toggleKnown }) {
                       {entryNo(r.id)}
                     </span>
                     <span className="text-[13px] font-semibold truncate">{r.name}</span>
-                    <span className={`ml-auto shrink-0 text-xs font-bold ${known[r.id] ? "text-ledger" : i === safeIdx ? "text-paper/80" : "text-ink-faint"}`}>
-                      {known[r.id] ? "✓" : "○"}
-                    </span>
+                    {statusMark(marks[r.id], i, i === safeIdx)}
                   </button>
                 )
               )}
@@ -279,7 +298,7 @@ function StudyMode({ known, toggleKnown }) {
         </aside>
 
         <div className="min-w-0">
-          <Flashcard ratio={current} flipped={flipped} onFlip={() => setFlipped((f) => !f)} isKnown={!!known[current.id]} />
+          <Flashcard ratio={current} flipped={flipped} onFlip={() => setFlipped((f) => !f)} status={currentStatus} />
           <div className="flex items-center justify-between gap-3 mt-6">
             <button onClick={() => go(-1)} disabled={safeIdx === 0} className="px-5 py-2.5 rounded-sm font-bold bg-paper-card border-2 border-ink text-ink ledger-shadow-sm ledger-press font-ledger text-sm disabled:border-dashed disabled:border-ink/40 disabled:text-ink-faint disabled:shadow-none disabled:cursor-default disabled:bg-transparent">
               ← Prev
@@ -292,29 +311,81 @@ function StudyMode({ known, toggleKnown }) {
             </button>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+          <div className="grid grid-cols-2 gap-3 mt-3">
             <button
-              onClick={() => toggleKnown(current.id)}
+              onClick={() => grade(markUnknown)}
               className={`py-3 rounded-sm font-bold text-sm border-2 border-ink ledger-shadow-sm ledger-press font-ledger uppercase tracking-wider ${
-                known[current.id] ? "bg-ledger text-paper-card" : "bg-paper-card text-ink"
+                currentStatus === "unknown" ? "bg-seal text-paper-card" : "bg-paper-card text-seal"
               }`}
             >
-              {known[current.id] ? "✓ Posted — undo?" : "Stamp as known"}
+              ✗ Don't know
             </button>
             <button
-              onClick={() => {
-                setFlipped(false);
-                setTimeout(() => setIdx((i) => Math.min(i + 1, filtered.length - 1)), 60);
-              }}
-              className="py-3 rounded-sm font-bold text-sm bg-ink text-paper-card border-2 border-ink ledger-shadow-sm ledger-press font-ledger uppercase tracking-wider"
+              onClick={() => grade(markKnown)}
+              className={`py-3 rounded-sm font-bold text-sm border-2 border-ink ledger-shadow-sm ledger-press font-ledger uppercase tracking-wider ${
+                currentStatus === "known" ? "bg-ledger text-paper-card" : "bg-paper-card text-ledger"
+              }`}
             >
-              {flipped ? "Next entry →" : "Reveal, then next →"}
+              ✓ I know this
             </button>
           </div>
+          {currentStatus && (
+            <button onClick={() => clearMark(current.id)} className="block mx-auto mt-2 font-ledger text-[11px] uppercase tracking-[0.18em] text-ink-faint underline underline-offset-4 hover:text-seal">
+              Clear mark (back to unseen)
+            </button>
+          )}
           <p className="font-ledger text-xs text-ink-soft mt-4 text-center uppercase tracking-widest">
-            Space = turn page · ← → = move through the book
+            Space = turn page · ← → = move · 1/K = know · 2/X = don't know
           </p>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function ProgressFilter({ progress, setProgress, marks, cat, setCat, order, setOrder, setIdx, setFlipped }) {
+  const countFor = (p) => {
+    const inCat = order
+      .map((id) => RATIOS.find((r) => r.id === id))
+      .filter((r) => cat === "all" || r.category === cat);
+    if (p === "all") return inCat.length;
+    if (p === "known") return inCat.filter((r) => marks[r.id] === "known").length;
+    if (p === "unknown") return inCat.filter((r) => marks[r.id] === "unknown").length;
+    return inCat.filter((r) => !marks[r.id]).length;
+  };
+  const items = [
+    { id: "all", label: `All · ${countFor("all")}` },
+    { id: "known", label: `✓ Known · ${countFor("known")}` },
+    { id: "unknown", label: `✗ Don't know · ${countFor("unknown")}` },
+    { id: "new", label: `○ New · ${countFor("new")}` },
+  ];
+  return (
+    <div>
+      <div className="flex flex-wrap gap-2 mb-3">
+        <FilterTab active={cat === "all"} onClick={() => setCat("all")} label={`All · ${order.length}`} />
+        {CATEGORIES.map((c) => (
+          <FilterTab
+            key={c.id}
+            active={cat === c.id}
+            onClick={() => setCat(c.id)}
+            label={c.id === "investment" ? "IN · INVESTMENT" : `${CAT_CODE[c.id]} · ${c.label}`}
+          />
+        ))}
+        <button
+          onClick={() => {
+            setOrder(shuffle(order));
+            setIdx(0);
+            setFlipped(false);
+          }}
+          className="px-4 py-1.5 rounded-sm text-sm font-bold bg-seal text-paper-card ledger-shadow-sm ledger-press border-2 border-ink font-ledger uppercase tracking-wider text-xs"
+        >
+          ↻ Shuffle
+        </button>
+      </div>
+      <div className="flex flex-wrap gap-2 mb-6">
+        {items.map((t) => (
+          <FilterTab key={t.id} active={progress === t.id} onClick={() => setProgress(t.id)} label={t.label} />
+        ))}
       </div>
     </div>
   );
@@ -469,12 +540,17 @@ function QuizMode() {
   );
 }
 
-function BrowseMode() {
+function BrowseMode({ marks, markKnown, markUnknown, clearMark }) {
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("all");
+  const [progress, setProgress] = useState("all");
   const list = RATIOS.filter(
     (r) =>
       (cat === "all" || r.category === cat) &&
+      (progress === "all" ||
+        (progress === "known" && marks[r.id] === "known") ||
+        (progress === "unknown" && marks[r.id] === "unknown") ||
+        (progress === "new" && !marks[r.id])) &&
       (r.name.toLowerCase().includes(q.toLowerCase()) || r.plain.toLowerCase().includes(q.toLowerCase()))
   );
   return (
@@ -491,6 +567,12 @@ function BrowseMode() {
           {CATEGORIES.map((c) => (
             <option key={c.id} value={c.id}>{CAT_CODE[c.id]} · {c.label}</option>
           ))}
+        </select>
+        <select value={progress} onChange={(e) => setProgress(e.target.value)} className="px-4 py-2.5 rounded-sm border-2 border-ink/30 bg-paper-card text-sm font-bold font-ledger">
+          <option value="all">All marks</option>
+          <option value="known">✓ Known</option>
+          <option value="unknown">✗ Don't know</option>
+          <option value="new">○ New</option>
         </select>
       </div>
       <p className="font-ledger text-[11px] uppercase tracking-[0.18em] text-ink-faint mb-4">{list.length} entries on record</p>
@@ -509,6 +591,31 @@ function BrowseMode() {
             <div className="flex items-center gap-4 mt-2 flex-wrap">
               <span className="font-ledger text-xs text-ink-soft">unit {r.unit}</span>
               <Direction dir={r.direction} />
+              {marks[r.id] === "known" && <span className="font-ledger text-xs font-bold text-ledger">✓ Known</span>}
+              {marks[r.id] === "unknown" && <span className="font-ledger text-xs font-bold text-seal">✗ Don't know</span>}
+            </div>
+            <div className="flex gap-2 mt-3">
+              <button
+                onClick={() => markKnown(r.id)}
+                className={`flex-1 py-1.5 rounded-sm text-xs font-bold border-2 border-ink font-ledger uppercase tracking-wider ledger-press ${marks[r.id] === "known" ? "bg-ledger text-paper-card" : "bg-paper-card text-ledger"}`}
+              >
+                ✓ Know
+              </button>
+              <button
+                onClick={() => markUnknown(r.id)}
+                className={`flex-1 py-1.5 rounded-sm text-xs font-bold border-2 border-ink font-ledger uppercase tracking-wider ledger-press ${marks[r.id] === "unknown" ? "bg-seal text-paper-card" : "bg-paper-card text-seal"}`}
+              >
+                ✗ Don't know
+              </button>
+              {marks[r.id] && (
+                <button
+                  onClick={() => clearMark(r.id)}
+                  title="Clear mark"
+                  className="px-3 py-1.5 rounded-sm text-xs font-bold border-2 border-ink/25 text-ink-faint font-ledger ledger-press hover:border-ink"
+                >
+                  ○
+                </button>
+              )}
             </div>
           </div>
         ))}
@@ -520,10 +627,42 @@ function BrowseMode() {
 
 export default function App() {
   const [mode, setMode] = useState("study");
-  const [known, setKnown] = useLocalStorage("bafs-known", {});
-  const knownCount = Object.values(known).filter(Boolean).length;
+  const [marks, setMarks] = useLocalStorage("bafs-known", {});
+  // Migrate the old boolean map (true = known) to the known/unknown map.
+  const [migrated, setMigrated] = useState(false);
+  useEffect(() => {
+    if (migrated) return;
+    setMigrated(true);
+    setMarks((m) => {
+      if (!m || typeof m !== "object" || Array.isArray(m)) return {};
+      let changed = false;
+      const next = {};
+      for (const [k, v] of Object.entries(m)) {
+        if (v === "known" || v === "unknown") next[k] = v;
+        else if (v === true) {
+          next[k] = "known";
+          changed = true;
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? next : m;
+    });
+  }, [migrated]);
 
-  const toggleKnown = (id) => setKnown((k) => ({ ...k, [id]: !k[id] }));
+  const vals = Object.values(marks);
+  const knownCount = vals.filter((v) => v === "known").length;
+  const unknownCount = vals.filter((v) => v === "unknown").length;
+  const newCount = RATIOS.length - knownCount - unknownCount;
+
+  const markKnown = (id) => setMarks((m) => ({ ...m, [id]: "known" }));
+  const markUnknown = (id) => setMarks((m) => ({ ...m, [id]: "unknown" }));
+  const clearMark = (id) =>
+    setMarks((m) => {
+      const next = { ...m };
+      delete next[id];
+      return next;
+    });
 
   const tabs = [
     { id: "study", label: "Ledger", sub: "flashcards" },
@@ -549,13 +688,14 @@ export default function App() {
         <div className="rule-thin mt-[3px]" />
         <div className="flex items-center gap-4 mt-3">
           <span className="font-ledger text-xs uppercase tracking-[0.18em] text-ink-soft whitespace-nowrap">
-            Balanced {knownCount}/16
+            ✓ {knownCount} · ✗ {unknownCount} · ○ {newCount}
           </span>
-          <div className="flex-1 h-3 bg-paper-card border-2 border-ink rounded-sm overflow-hidden">
+          <div className="flex-1 h-3 bg-paper-card border-2 border-ink rounded-sm overflow-hidden flex">
             <div className="h-full bg-ledger transition-all" style={{ width: `${(knownCount / RATIOS.length) * 100}%` }} />
+            <div className="h-full bg-seal transition-all" style={{ width: `${(unknownCount / RATIOS.length) * 100}%` }} />
           </div>
           <span className={`stamp ${knownCount === RATIOS.length ? "text-ledger border-ledger stamp-in" : "text-ink-soft border-ink/60"}`}>
-            {knownCount === RATIOS.length ? "✓ Balanced" : "Unbalanced"}
+            {knownCount === RATIOS.length ? "✓ Balanced" : `${knownCount}/${RATIOS.length} known`}
           </span>
         </div>
       </header>
@@ -579,9 +719,9 @@ export default function App() {
           ))}
         </div>
 
-        {mode === "study" && <StudyMode known={known} toggleKnown={toggleKnown} />}
+        {mode === "study" && <StudyMode marks={marks} markKnown={markKnown} markUnknown={markUnknown} clearMark={clearMark} />}
         {mode === "quiz" && <QuizMode />}
-        {mode === "browse" && <BrowseMode />}
+        {mode === "browse" && <BrowseMode marks={marks} markKnown={markKnown} markUnknown={markUnknown} clearMark={clearMark} />}
 
         <footer className="mt-12 pb-6">
           <div className="rule-thin" />
